@@ -1,0 +1,39 @@
+# https://merenlab.org/2018/07/09/anvio-snakemake-workflows/
+# https://merenlab.org/2018/07/09/anvio-snakemake-workflows/#running-workflows-on-a-cluster
+
+cd /project/blekhman/sjarif/konzo
+conda activate anvio-8
+
+# download the data pack
+wget http://merenlab.org/files/WORKFLOW_TUTORIAL_DATA.tar.gz
+
+# unpack it
+tar -xvzf WORKFLOW_TUTORIAL_DATA.tar.gz
+
+# go into the directory
+cd WORKFLOW_TUTORIAL_DATA
+
+anvi-migrate config-contigs-default.json --migrate-safely
+
+anvi-run-workflow -w contigs \
+                  --get-default-config config-contigs-default.json
+
+anvi-migrate 02_CONTIGS_contigs_workflow/G01-contigs.db --migrate-safely
+
+anvi-display-contigs-stats 02_CONTIGS_contigs_workflow/G01-contigs.db
+
+pip install illumina-utils
+
+# ------------------------ EVERTYHING ABOVE THIS LINE WORKS ------------------------
+
+anvi-setup-ncbi-cogs # permissions error
+anvi-setup-scg-taxonomy # Config Error: Something went wrong and DIAMOND did not create the database file it was supposed to for Ribosomal_S2 :(      
+
+anvi-run-workflow -w contigs \
+                  -c config-contigs.json \
+                  --additional-params \
+                      --cluster 'clusterize -log {log} -n {threads}' \
+                      --jobs 20 \
+                      --resources nodes=40
+
+anvi-display-contigs-stats 02_CONTIGS_contigs_workflow/G01-contigs.db
