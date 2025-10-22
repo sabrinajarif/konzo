@@ -13,7 +13,7 @@ snakemake --keep-going --jobs 25 --slurm --default-resources slurm_account=pi-bl
 # to submit this job:
 # navigate to cd /project/blekhman/sjarif/konzo
 # conda activate konzo
-# cd 01_MT_initialQC
-# sbatch --job-name=MT_initialQC -o MT_initialQC.log run_snakemake.slurm
-# this will create a log called "MT_initialQC.log" in the current directory
+# cd 03_MT_cleanedQC
+# sbatch --job-name=MT_cleanedQC -o MT_cleanedQC.log run_snakemake.slurm
+# this will create a log called "MT_cleanedQC.log" in the current directory
 

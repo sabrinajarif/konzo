@@ -1,4 +1,6 @@
 ''''
+THIS CODE IS WRITTEN BY JJ COLGAN
+
 To dos:
     - Add checkm2 QC
     - Add GUNC QC

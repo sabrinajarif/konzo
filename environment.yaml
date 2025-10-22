@@ -1,0 +1,13 @@
+name: konzo
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - snakemake-minimal=7.32.4
+  - fastqc=0.12.1
+  - snakemake-wrapper-utils=0.6.2
+  - multiqc=1.29
+  - trimmomatic=0.39
+  - kneaddata=0.12.1

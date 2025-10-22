@@ -1,0 +1,3 @@
+As of 20251020, I am starting this workflow at 03_cleanedQC because cleaned reads were already available. 
+I have applied the same fastQC steps to the raw and cleaned reads, I just don't know what steps JJ used to trim/dehost/perform rRNA removal.
+In other words, I have multiQC reports for pre- and post- cleaning reads (step 01 and 03), I just don't know what the actual processing was (step 02). I'll go back to adjust that later.
