@@ -1,0 +1,145 @@
+import os
+
+BASE = "/scratch/midway3/sjarif/07_MT_exports_HMP"
+CONTIGS_DB = "/project/blekhman/shared/konzo/HMP/raw_fastq/MGX/05_CONTIGS_DB"
+PROFILE_DB = "/project/blekhman/sjarif/konzo/06_MT_profile_HMP/profiled"
+DIAMOND_DB = "/scratch/midway3/sjarif/db/diamond/refseq_ref.dmnd"
+
+# Get all sample names (folders in CONTIGS_DB)
+SAMPLES = [f for f in os.listdir(PROFILE_DB) if os.path.isdir(os.path.join(PROFILE_DB, f))]
+
+rule all:
+    input:
+        # final taxonomy outputs
+        expand(BASE + "/{sample}/{sample}_accession_to_taxid.tsv", sample=SAMPLES),
+        # gene coverage outputs
+        expand(BASE + "/{sample}/{sample}-GENE-COVERAGES.txt", sample=SAMPLES),
+        expand(BASE + "/{sample}/{sample}-GENE-DETECTION.txt", sample=SAMPLES)
+
+# -------------------------------------------------------------
+# STEP 1: Export gene calls
+rule export_gene_calls:
+    input:
+        contigs_db = lambda wildcards: os.path.join(CONTIGS_DB, wildcards.sample, "contigs.db")
+    output:
+        gene_calls = BASE + "/{sample}/{sample}_gene_calls.tsv"
+    params:
+        outdir = BASE + "/{sample}"
+    threads: 4
+    resources:
+        mem_mb = 32000
+    shell:
+        """
+        mkdir -p {params.outdir}
+        anvi-export-gene-calls \
+            -c {input.contigs_db} \
+            --gene-caller prodigal \
+            -o {output.gene_calls}
+        """
+
+# -------------------------------------------------------------
+# STEP 2: Filter gene calls for length >=50 AA and complete genes
+rule filter_gene_calls:
+    input:
+        gene_calls = BASE + "/{sample}/{sample}_gene_calls.tsv"
+    output:
+        gene_ids = BASE + "/{sample}/{sample}_gene_ids_min50aa_complete.txt"
+    threads: 1
+    resources:
+        mem_mb = 4000
+    shell:
+        """
+        awk -F'\t' 'NR==1 {{next}} $6==0 && length($10)>=50 {{print $1}}' {input.gene_calls} > {output.gene_ids}
+        """
+
+# -------------------------------------------------------------
+# STEP 3: Extract AA sequences for filtered gene calls
+rule get_aa_sequences:
+    input:
+        contigs_db = lambda wildcards: os.path.join(CONTIGS_DB, wildcards.sample, "contigs.db"),
+        gene_ids = BASE + "/{sample}/{sample}_gene_ids_min50aa_complete.txt"
+    output:
+        aa_fasta = BASE + "/{sample}/{sample}_genes.faa"
+    threads: 4
+    resources:
+        mem_mb = 32000
+    shell:
+        """
+        anvi-get-sequences-for-gene-calls \
+            -c {input.contigs_db} \
+            --get-aa-sequences \
+            --gene-caller-ids {input.gene_ids} \
+            --output-file {output.aa_fasta}
+        """
+
+# -------------------------------------------------------------
+# STEP 4: Run DIAMOND blastp
+rule diamond_blastp:
+    input:
+        aa_fasta = BASE + "/{sample}/{sample}_genes.faa"
+    output:
+        blast_out = BASE + "/{sample}/{sample}_diamond_matches.tsv"
+    threads: 32
+    resources:
+        mem_mb = 75000
+    shell:
+        """
+        diamond blastp \
+            --db {DIAMOND_DB} \
+            --query {input.aa_fasta} \
+            --out {output.blast_out} \
+            --outfmt 6 qseqid sseqid pident length evalue bitscore \
+            --threads {threads}
+        """
+
+# -------------------------------------------------------------
+# STEP 5: Filter DIAMOND best hit
+rule filter_best_hit:
+    input:
+        blast_out = BASE + "/{sample}/{sample}_diamond_matches.tsv"
+    output:
+        best_hit = BASE + "/{sample}/{sample}_diamond_matches_besthit.tsv"
+    threads: 2
+    resources:
+        mem_mb = 16000
+    shell:
+        """
+        sort -k1,1 -k5,5g -k6,6nr {input.blast_out} | awk '!seen[$1]++' > {output.best_hit}
+        """
+
+# -------------------------------------------------------------
+# STEP 6: Add taxonomy
+rule add_taxonomy:
+    input:
+        best_hit = BASE + "/{sample}/{sample}_diamond_matches_besthit.tsv"
+    output:
+        accession2taxid = BASE + "/{sample}/{sample}_accession_to_taxid.tsv"
+    threads: 2
+    resources:
+        mem_mb = 16000
+    shell:
+        """
+        cut -f2 {input.best_hit} | sort -u > {BASE}/{wildcards.sample}/{wildcards.sample}_besthit_accessions.txt
+        zgrep -F -f {BASE}/{wildcards.sample}/{wildcards.sample}_besthit_accessions.txt /scratch/midway3/sjarif/db/diamond/prot.accession2taxid.gz \
+            | awk '{{print $1 "\t" $3}}' > {output.accession2taxid}
+        """
+
+# -------------------------------------------------------------
+# STEP 7: Extract gene coverages and detection
+rule export_gene_coverage:
+    input:
+        contigs = lambda wildcards: os.path.join(CONTIGS_DB, wildcards.sample, "contigs.db"),
+        profile = lambda wildcards: os.path.join(PROFILE_DB, wildcards.sample, "PROFILE.db")
+    output:
+        coverage = BASE + "/{sample}/{sample}-GENE-COVERAGES.txt",
+        detection = BASE + "/{sample}/{sample}-GENE-DETECTION.txt"
+    threads: 4
+    resources:
+        mem_mb = 32000
+    shell:
+        """
+        anvi-export-gene-coverage-and-detection \
+            -p {input.profile} \
+            -c {input.contigs} \
+            -O {BASE}/{wildcards.sample}/{wildcards.sample}
+        """

@@ -1,0 +1,108 @@
+# imports
+import os
+import glob
+import re
+import pandas as pd
+
+# define base directory
+BASE = "/project/blekhman/sjarif/konzo/02_MT_trim_dehost_rRNAremove_HMP"
+FASTQ_DIR = "/project/blekhman/shared/konzo/HMP/raw_fastq/MTX"
+
+samples = sorted({
+    os.path.basename(f).replace(".fastq.gz", "").rsplit("_R", 1)[0]
+    for f in glob.glob(f"{FASTQ_DIR}/*.fastq.gz")
+})
+
+
+# Create directories if they do not exist
+os.makedirs(f"{BASE}/ribodetector", exist_ok=True)
+os.makedirs(f"{BASE}/ribodetector/logs", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads/logs", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads/zip", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads/unzip", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads/html", exist_ok=True)
+os.makedirs(f"{BASE}/cleaned_reads/multiQC", exist_ok=True)
+
+
+rule all:
+    input:
+        expand(f"{BASE}/ribodetector/{{sample}}_R1.fastq.gz", sample=samples),
+        expand(f"{BASE}/ribodetector/{{sample}}_R2.fastq.gz", sample=samples),
+        expand(f"{BASE}/cleaned_reads/html/{{sample}}_R1_fastqc.html", sample=samples),
+        expand(f"{BASE}/cleaned_reads/html/{{sample}}_R2_fastqc.html", sample=samples),
+        BASE + "/cleaned_reads/multiQC/multiqc_report.html"
+
+
+# Ribodetector
+# FROM MARK:
+# the -e norrna option outputs sequences with a high probability of being a normal not rRNA gene
+# the -e rrna option discards genes that have a high likelihood of being rRNA
+# This is a little confusing in the documentation and I think the -e norrna option ends up being more conservative.
+rule ribodetector:
+    input:
+        r1 = f"{FASTQ_DIR}/{{sample}}_R1.fastq.gz",
+        r2 = f"{FASTQ_DIR}/{{sample}}_R2.fastq.gz"
+    output:
+        r1 = f"{BASE}/ribodetector/{{sample}}_R1.fastq.gz",
+        r2 = f"{BASE}/ribodetector/{{sample}}_R2.fastq.gz"
+    log:
+        f"{BASE}/ribodetector/logs/{{sample}}.log"
+    threads: 20
+    resources:
+        mem_mb = 32000
+    shell:
+        """
+        ribodetector_cpu -t 20 \
+            -l 150 \
+            -i {input.r1} {input.r2} \
+            -e rrna \
+            --chunk_size 256 \
+            -o {output.r1} {output.r2} \
+            &> {log}
+        """
+
+rule fastqc:
+    input:
+        f"{BASE}/ribodetector/{{sample}}_{{read}}.fastq.gz"
+    output:
+        html = BASE + "/cleaned_reads/html/{sample}_{read}_fastqc.html",
+        zip = BASE + "/cleaned_reads/zip/{sample}_{read}_fastqc.zip"
+    params:
+        extra = "--quiet"
+    log:
+        BASE + "/cleaned_reads/logs/{sample}_{read}.log"
+    threads: 1
+    resources:
+        mem_mb = 1024
+    wrapper:
+        "v5.7.0/bio/fastqc"
+
+
+# Unzip each FastQC zip file (so MultiQC can read them)
+rule unzip_fastqc:
+    input:
+        BASE + "/cleaned_reads/zip/{sample}_{read}_fastqc.zip"
+    output:
+        directory(BASE + "/cleaned_reads/unzip/{sample}_{read}_fastqc")
+    shell:
+        """
+        unzip -o {input} -d {BASE}/cleaned_reads/unzip
+        """
+
+
+# Run MultiQC on all FastQC outputs
+rule multiqc:
+    input:
+        expand(BASE + "/cleaned_reads/unzip/{sample}_{read}_fastqc",
+               sample=samples, read=["R1","R2"])
+    output:
+        BASE + "/cleaned_reads/multiQC/multiqc_report.html"
+    shell:
+        """
+        multiqc {BASE}/cleaned_reads/unzip -o {BASE}/cleaned_reads/multiQC
+        """
+
+
+
+

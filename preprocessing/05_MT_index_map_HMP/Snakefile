@@ -1,0 +1,99 @@
+import os
+import glob
+
+# Base directories
+BASE = "/project/blekhman/sjarif/konzo/05_MT_index_map_HMP"
+FASTQ_DIR = "/project/blekhman/sjarif/konzo/02_MT_trim_dehost_rRNAremove_HMP/ribodetector"
+CONTIGS_DIR = f"{BASE}/contigs"
+
+# Make sure output directories exist
+os.makedirs(f"{BASE}/mapped", exist_ok=True)
+os.makedirs(f"{BASE}/bowtie2_index", exist_ok=True)
+
+# Get sample names from FASTQ files
+samples = sorted(
+    {os.path.basename(f).replace("_R1.fastq.gz","").replace("_R2.fastq.gz","")
+     for f in glob.glob(f"{FASTQ_DIR}/*fastq.gz")}
+)
+
+rule all:
+    input:
+        expand(f"{BASE}/mapped/{{sample}}.sorted.bam", sample=samples),
+        expand(f"{BASE}/mapped/{{sample}}.flagstat.txt", sample=samples),
+        f"{BASE}/multiQC/multiqc_report.html"
+
+# -------------------------
+# 1. Build bowtie2 index per sample
+# -------------------------
+rule bowtie2_index:
+    input:
+        fa = lambda wildcards: f"{CONTIGS_DIR}/{wildcards.sample}_contigs.fa"
+    output:
+        idx = expand(f"{BASE}/bowtie2_index/{{sample}}.{{ext}}", 
+                     sample="{sample}", 
+                     ext=["1.bt2","2.bt2","3.bt2","4.bt2","rev.1.bt2","rev.2.bt2"])
+    threads: 4
+    shell:
+        """
+        bowtie2-build {input.fa} {BASE}/bowtie2_index/{wildcards.sample}
+        """
+
+
+# -------------------------
+# 2. Map RNA reads to sample-specific contigs
+# -------------------------
+rule map_reads:
+    input:
+        idx = rules.bowtie2_index.output.idx,
+        r1 = f"{FASTQ_DIR}/{{sample}}_R1.fastq.gz",
+        r2 = f"{FASTQ_DIR}/{{sample}}_R2.fastq.gz"
+    output:
+        temp(f"{BASE}/mapped/{{sample}}.sam")
+    threads: 12
+    shell:
+        """
+        bowtie2 -x {BASE}/bowtie2_index/{wildcards.sample} \
+            -1 {input.r1} -2 {input.r2} \
+            --very-sensitive -p {threads} \
+            -S {output}
+        """
+
+# -------------------------
+# 3. Convert SAM -> sorted BAM
+# -------------------------
+rule sam_to_bam:
+    input:
+        f"{BASE}/mapped/{{sample}}.sam"
+    output:
+        f"{BASE}/mapped/{{sample}}.sorted.bam"
+    threads: 8
+    shell:
+        """
+        samtools view -bS {input} \
+        | samtools sort -@ {threads} -o {output}
+        samtools index {output}
+        """
+
+# -------------------------
+# 4. Flagstat
+# -------------------------
+rule flagstat:
+    input:
+        bam = f"{BASE}/mapped/{{sample}}.sorted.bam"
+    output:
+        txt = f"{BASE}/mapped/{{sample}}.flagstat.txt"
+    shell:
+        """
+        samtools flagstat {input.bam} > {output.txt}
+        """
+
+rule multiqc_flagstat:
+    input:
+        expand(f"{BASE}/mapped/{{sample}}.flagstat.txt", sample=samples)
+    output:
+        html = f"{BASE}/multiQC/multiqc_report.html"
+    shell:
+        """
+        multiqc {BASE}/mapped -o {BASE}/multiQC
+        """
+

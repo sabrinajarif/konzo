@@ -1,0 +1,34 @@
+import os
+
+# URLs for MTX and MGX
+BASE = {
+    "MTX": "https://g-227ca.190ebd.75bc.data.globus.org/ibdmdb/raw/HMP2/MTX/2018-04-26",
+    "MGX": "https://g-227ca.190ebd.75bc.data.globus.org/ibdmdb/raw/HMP2/MGX/2018-05-04"
+}
+
+# read list of external IDs
+with open("external_ids.txt") as f:
+    IDS = [line.strip() for line in f if line.strip()]
+
+# final targets: R1 and R2 for each ID, for both MTX and MGX
+rule all:
+    input:
+        expand("raw_fastq/MTX/{id}_R1.fastq.gz", id=IDS),
+        expand("raw_fastq/MTX/{id}_R2.fastq.gz", id=IDS),
+        expand("raw_fastq/MGX/{id}_R1.fastq.gz", id=IDS),
+        expand("raw_fastq/MGX/{id}_R2.fastq.gz", id=IDS)
+
+# rule to download & extract each tar
+rule download_and_extract:
+    output:
+        r1="raw_fastq/{datatype}/{id}_R1.fastq.gz",
+        r2="raw_fastq/{datatype}/{id}_R2.fastq.gz"
+    params:
+        url=lambda wildcards: f"{BASE[wildcards.datatype]}/{wildcards.id}.tar"
+    shell:
+        """
+        wget -O raw_fastq/{wildcards.datatype}/{wildcards.id}.tar {params.url}
+        tar -xf raw_fastq/{wildcards.datatype}/{wildcards.id}.tar -C raw_fastq/{wildcards.datatype}
+        rm raw_fastq/{wildcards.datatype}/{wildcards.id}.tar
+        """
+#mkdir -p raw_fastq/{wildcards.datatype}

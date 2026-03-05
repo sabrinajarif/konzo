@@ -1,0 +1,135 @@
+import os
+import glob
+import re
+import pandas as pd
+
+BASE = "/project/blekhman/sjarif/konzo/06_MT_profile_merge_cluster"
+CONTIGS = "/project/blekhman/shared/konzo/contigs/masiManimba.db"
+BAMS = "/project/blekhman/sjarif/konzo/05_MT_index_map/mapped"
+
+os.makedirs(f"{BASE}/profiled", exist_ok=True)
+
+SAMPLES = [os.path.basename(f).replace(".sorted.bam","") 
+           for f in glob.glob(f"{BAMS}/*.sorted.bam")]
+
+# Based below steps on this blog:
+# https://merenlab.org/2015/06/10/combining-omics-data/
+
+rule all:
+    input:
+        expand(f"{BASE}/profiled/{{sample}}", sample=SAMPLES),
+        f"{BASE}/merged",
+        f"{BASE}/merged/mtx_clustering.newick"
+
+
+# In short, anvi-profile runs various analyses on the contigs in your contigs-db and how they relate to the sample information 
+# stored in the bam-file you provided. It then stores this information into a single-profile-db. Specifically, this program calculates 
+# 1) coverage per nucleotide position (if you’re unsure what coverage refers to, check out this page)
+# 2) single-nucleotide, single-codon, and single-amino acid variants (You can find all of those terms on the vocab page linked above, as well as a more detailed explaination here)
+# 3) structural variants such as insertions or deletions
+
+rule anvi_profile:
+    input:
+        bam = lambda wildcards: f"{BAMS}/{wildcards.sample}.sorted.bam",
+        contigs = CONTIGS
+    output:
+        db = directory(f"{BASE}/profiled/{{sample}}")
+    conda:
+        "anvio-8"
+    threads: 8
+    resources:
+        cpus_per_task = 8,
+        mem_mb = 64000,
+        tasks = 1,
+        time = "12h",
+        account = "pi-blekhman",
+        partition = "blekhman"
+    shell:
+        """
+        # anvio doesnt accept sample names that start with digits
+
+        SAMPLE_NAME="{wildcards.sample}"
+        if [[ $SAMPLE_NAME =~ ^[0-9] ]]; then
+            SAMPLE_NAME="S$SAMPLE_NAME"
+        fi
+
+        echo "Adjusted sample name for anvi-profile: $SAMPLE_NAME"
+
+        anvi-profile \
+            -i {input.bam} \
+            -c {input.contigs} \
+            -o {output.db} \
+            --sample-name $SAMPLE_NAME \
+            --num-threads {threads} \
+            --skip-hierarchical-clustering
+        """
+
+
+# The main function of anvi-merge is to convert multiple single-profile-dbs into a single profile-db 
+# (also called a merged profile database). 
+# Basically, this takes the alignment data from each sample (each contained in its own single-profile-db) 
+# and combines them into a single database that anvi’o can look through more easily.
+rule anvi_merge:
+    input:
+        profiled = expand(f"{BASE}/profiled/{{sample}}/PROFILE.db", sample=SAMPLES),
+        contigs = CONTIGS
+    output:
+        merged_dir = directory(f"{BASE}/merged")
+    conda:
+        "anvio-8"
+    threads: 8
+    resources:
+        cpus_per_task = 8,
+        mem_mb = 64000,
+        tasks = 1,
+        time = "12h",
+        account = "pi-blekhman",
+        partition = "blekhman"
+    shell:
+        """
+        anvi-merge \
+            {input.profiled} \
+            -c {input.contigs} \
+            -o {output.merged_dir} \
+            --skip-hierarchical-clustering \
+            --num-threads {threads}
+        """
+
+
+# This program can use an anvi’o clustering-configuration file to access various data sources 
+# in anvi’o databases to produce a hierarchical clustering dendrogram for items.
+# It is especially powerful when the user wishes to create a hierarchical clustering of contigs 
+# or gene clusters using only a specific set of samples. 
+# If you would like to see an example usage of this program see the article on combining metagenomics with metatranscriptomics.
+
+rule anvi_cluster:
+    """
+    Runs anvi-experimental-organization on the merged MTX profiles.
+    Produces a dendrogram for contig clustering.
+    """
+    input:
+        config = f"{BASE}/my_cluster_config.ini",
+        merged_dir = f"{BASE}/merged",
+        contigs_db = CONTIGS,
+        profile_db = f"{BASE}/merged/PROFILE.db"
+    output:
+        newick_tree = f"{BASE}/merged/mtx_clustering.newick"
+    params:
+        skip_store = True  # True = produce dendrogram without storing in DB
+    threads: 8
+    resources:
+        cpus_per_task=8,
+        mem_mb=64000,
+        tasks=1,
+        time="12h",
+        account="pi-blekhman",
+        partition="blekhman"
+    shell:
+        """
+        anvi-experimental-organization {input.config} \
+            --input-directory {input.merged_dir} \
+            --contigs-db {input.contigs_db} \
+            --profile-db {input.profile_db} \
+            --skip-store-in-db \
+            --output-file {output.newick_tree}
+        """

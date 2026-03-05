@@ -1,0 +1,81 @@
+############################################
+# CONFIG
+############################################
+
+BASE = "/project/blekhman/sjarif/konzo/07_MT_exports"
+CONTIGS_DB = "/project/blekhman/shared/konzo/contigs/masiManimba.db"
+PROFILE_BASE = "/project/blekhman/sjarif/konzo/06_MT_profile_merge_cluster/profiled/mtx"
+
+SAMPLES = glob_wildcards(f"{PROFILE_BASE}/{{sample}}/PROFILE.db").sample
+
+
+############################################
+# RULE ALL
+############################################
+
+rule all:
+    input:
+        f"{BASE}/gene_calls.txt",
+        expand(f"{BASE}/{{sample}}/gene_coverage-GENE-COVERAGES.txt", sample=SAMPLES),
+        expand(f"{BASE}/{{sample}}/gene_coverage-GENE-DETECTION.txt", sample=SAMPLES),
+        f"{BASE}/scg_taxonomy.txt"
+
+
+############################################
+# EXPORT GENE CALLS (ONCE)
+############################################
+
+rule export_gene_calls:
+    input:
+        CONTIGS_DB
+    output:
+        f"{BASE}/gene_calls.txt"
+    threads: 2
+    shell:
+        """
+        anvi-export-gene-calls \
+          -c {input} \
+          -o {output}
+        """
+
+
+############################################
+# EXPORT GENE COVERAGE (PER SAMPLE)
+############################################
+
+rule export_gene_coverage:
+    input:
+        contigs=CONTIGS_DB,
+        profile=f"{PROFILE_BASE}/{{sample}}/PROFILE.db"
+    output:
+        coverage=f"{BASE}/{{sample}}/gene_coverage-GENE-COVERAGES.txt",
+        detection=f"{BASE}/{{sample}}/gene_coverage-GENE-DETECTION.txt"
+
+    threads: 4
+    shell:
+        """
+        mkdir -p {BASE}/{wildcards.sample}
+
+        anvi-export-gene-coverage-and-detection \
+          -p {input.profile} \
+          -c {input.contigs} \
+          -O {BASE}/{wildcards.sample}/gene_coverage
+        """
+
+
+############################################
+# EXPORT TAXONOMY (ONCE)
+############################################
+
+rule export_scg_taxonomy:
+    input:
+        CONTIGS_DB
+    output:
+        f"{BASE}/scg_taxonomy.txt"
+    threads: 2
+    shell:
+        """
+        anvi-export-scg-taxonomy \
+          -c {input} \
+          -o {output}
+        """

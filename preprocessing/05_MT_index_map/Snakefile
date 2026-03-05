@@ -1,0 +1,90 @@
+import os
+import glob
+import re
+import pandas as pd
+
+BASE = "/project/blekhman/sjarif/konzo/05_MT_index_map"
+CONTIGS = "/project/blekhman/shared/konzo/contigs/masiManimba.contigs.simplified.fa"
+FASTQ_DIR = "/project/blekhman/sjarif/konzo/02_MT_trim_dehost_rRNAremove/ribodetector"
+
+os.makedirs(f"{BASE}/mapped", exist_ok=True)
+os.makedirs(f"{BASE}/bowtie2_index", exist_ok=True)
+
+samples = sorted(
+    {os.path.basename(f).replace("_R1.fastq.gz","").replace("_R2.fastq.gz","")
+     for f in glob.glob(f"{FASTQ_DIR}/*fastq.gz")}
+)
+
+rule all:
+    input:
+        expand(f"{BASE}/mapped/{{sample}}.sorted.bam", sample=samples),
+        BASE + "/multiQC/multiqc_report.html"
+
+rule bowtie2_index:
+    input:
+        CONTIGS
+    output:
+        idx = expand(f"{BASE}/bowtie2_index/{{name}}.{{ext}}",
+            name="masiManimba",
+            ext=["1.bt2","2.bt2","3.bt2","4.bt2","rev.1.bt2","rev.2.bt2"])
+    params:
+        prefix = "bowtie2_index/masiManimba"
+    shell:
+        """
+        mkdir -p bowtie2_index
+        bowtie2-build {input} {params.prefix}
+        """
+
+
+rule map_reads:
+    input:
+        idx = rules.bowtie2_index.output.idx,
+        r1 = f"{FASTQ_DIR}/{{sample}}_R1.fastq.gz",
+        r2 = f"{FASTQ_DIR}/{{sample}}_R2.fastq.gz"
+    output:
+        temp(f"{BASE}/mapped/{{sample}}.sam")
+    threads: 12
+    params:
+        prefix = "bowtie2_index/masiManimba"
+    shell:
+        """
+        bowtie2 -x {params.prefix} \
+            -1 {input.r1} -2 {input.r2} \
+            --very-sensitive -p {threads} \
+            -S {output}
+        """
+
+rule sam_to_bam:
+    input:
+        f"{BASE}/mapped/{{sample}}.sam"
+
+    output:
+        f"{BASE}/mapped/{{sample}}.sorted.bam"
+
+    threads: 8
+    shell:
+        """
+        samtools view -bS {input} \
+        | samtools sort -@ {threads} -o {output}
+        samtools index {output}
+        """
+
+rule flagstat:
+    input:
+        bam = f"{BASE}/mapped/{{sample}}.sorted.bam"
+    output:
+        txt = f"{BASE}/mapped/{{sample}}.flagstat.txt"
+    shell:
+        """
+        samtools flagstat {input.bam} > {output.txt}
+        """
+
+rule multiqc_flagstat:
+    input:
+        expand(f"{BASE}/mapped/{{sample}}.flagstat.txt", sample=samples)
+    output:
+        html = f"{BASE}/multiQC/multiqc_report.html"
+    shell:
+        """
+        multiqc {BASE}/mapped -o {BASE}/multiQC
+        """

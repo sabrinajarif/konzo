@@ -1,0 +1,43 @@
+import os
+import glob
+
+BASE = "/project/blekhman/sjarif/konzo/06_MT_profile_HMP"
+BAMS = "/project/blekhman/sjarif/konzo/05_MT_index_map_HMP/mapped"
+CONTIGS_DIR = "/project/blekhman/shared/konzo/HMP/raw_fastq/MGX/05_CONTIGS_DB"
+
+os.makedirs(f"{BASE}/profiled", exist_ok=True)
+
+# Get sample names from BAM files
+SAMPLES = [os.path.basename(f).replace(".sorted.bam","") 
+           for f in glob.glob(f"{BAMS}/*.sorted.bam")]
+
+rule all:
+    input:
+        expand(f"{BASE}/profiled/{{sample}}", sample=SAMPLES)
+
+rule anvi_profile:
+    input:
+        bam = lambda wildcards: f"{BAMS}/{wildcards.sample}.sorted.bam",
+        contigs = lambda wildcards: f"{CONTIGS_DIR}/{wildcards.sample}/contigs.db"
+    output:
+        db = directory(f"{BASE}/profiled/{{sample}}")
+    threads: 8
+    resources:
+        mem_mb = 32000
+    shell:
+        """
+        SAMPLE_NAME="{wildcards.sample}"
+        if [[ $SAMPLE_NAME =~ ^[0-9] ]]; then
+            SAMPLE_NAME="S$SAMPLE_NAME"
+        fi
+
+        echo "Running anvi-profile for $SAMPLE_NAME on {input.contigs}"
+
+        anvi-profile \
+            -i {input.bam} \
+            -c {input.contigs} \
+            -o {output.db} \
+            --sample-name $SAMPLE_NAME \
+            --num-threads {threads} \
+            --skip-hierarchical-clustering
+        """
